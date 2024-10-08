@@ -47,12 +47,19 @@
 #endif
 #include <sys/file.h> /* flock(2) */
 
+#define ERR 2
+#define WARN 4
+#define INFO 6
+#define DEBUG 7
+
+#define TRACE fuse_log(WARN,"%s res %d errno %d\n",__FUNCTION__,res,errno);
+
 static void *xmp_init(struct fuse_conn_info *conn,
 		      struct fuse_config *cfg)
 {
 	(void) conn;
-	cfg->use_ino = 1;
-	cfg->nullpath_ok = 1;
+	//cfg->use_ino = 1;
+	//cfg->nullpath_ok = 1;
 
 	/* parallel_direct_writes feature depends on direct_io features.
 	   To make parallel_direct_writes valid, need either set cfg->direct_io
@@ -71,7 +78,7 @@ static void *xmp_init(struct fuse_conn_info *conn,
 	cfg->entry_timeout = 0;
 	cfg->attr_timeout = 0;
 	cfg->negative_timeout = 0;
-
+//	TRACE
 	return NULL;
 }
 
@@ -86,9 +93,9 @@ static int xmp_getattr(const char *path, struct stat *stbuf,
 		res = fstat(fi->fh, stbuf);
 	else
 		res = lstat(path, stbuf);
+	TRACE
 	if (res == -1)
 		return -errno;
-
 	return 0;
 }
 
@@ -97,9 +104,10 @@ static int xmp_access(const char *path, int mask)
 	int res;
 
 	res = access(path, mask);
+	TRACE
 	if (res == -1)
 		return -errno;
-
+//	TRACE
 	return 0;
 }
 
@@ -108,6 +116,7 @@ static int xmp_readlink(const char *path, char *buf, size_t size)
 	int res;
 
 	res = readlink(path, buf, size - 1);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -129,6 +138,7 @@ static int xmp_opendir(const char *path, struct fuse_file_info *fi)
 		return -ENOMEM;
 
 	d->dp = opendir(path);
+	TRACE
 	if (d->dp == NULL) {
 		res = -errno;
 		free(d);
@@ -146,12 +156,45 @@ static inline struct xmp_dirp *get_dirp(struct fuse_file_info *fi)
 	return (struct xmp_dirp *) (uintptr_t) fi->fh;
 }
 
+
 static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi,
 		       enum fuse_readdir_flags flags)
 {
 	struct xmp_dirp *d = get_dirp(fi);
+	(void) offset;
+	(void) fi;
+	(void) flags;
 
+	if (strcmp(path, "/") == 0)
+	{
+	filler(buf, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	filler(buf, "..", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	filler(buf, "dev", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	return 0;
+	}
+
+	if (strcmp(path, "/dev") == 0)
+	{
+	filler(buf, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	filler(buf, "..", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	filler(buf, "sda", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	return 0;
+	}
+
+
+	return -ENOENT;
+}
+
+
+
+
+static int xmp_readdir1(const char *path, void *buf, fuse_fill_dir_t filler,
+		       off_t offset, struct fuse_file_info *fi,
+		       enum fuse_readdir_flags flags)
+{
+	struct xmp_dirp *d = get_dirp(fi);
+	int res=0;
 	(void) path;
 	if (offset != d->offset) {
 #ifndef __FreeBSD__
@@ -176,7 +219,7 @@ static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		}
 #ifdef HAVE_FSTATAT
 		if (flags & FUSE_READDIR_PLUS) {
-			int res;
+		
 
 			res = fstatat(dirfd(d->dp), d->entry->d_name, &st,
 				      AT_SYMLINK_NOFOLLOW);
@@ -203,7 +246,7 @@ static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		d->entry = NULL;
 		d->offset = nextoff;
 	}
-
+	TRACE
 	return 0;
 }
 
@@ -224,6 +267,7 @@ static int xmp_mknod(const char *path, mode_t mode, dev_t rdev)
 		res = mkfifo(path, mode);
 	else
 		res = mknod(path, mode, rdev);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -235,9 +279,9 @@ static int xmp_mkdir(const char *path, mode_t mode)
 	int res;
 
 	res = mkdir(path, mode);
+	TRACE
 	if (res == -1)
 		return -errno;
-
 	return 0;
 }
 
@@ -246,9 +290,9 @@ static int xmp_unlink(const char *path)
 	int res;
 
 	res = unlink(path);
+	TRACE
 	if (res == -1)
 		return -errno;
-
 	return 0;
 }
 
@@ -257,9 +301,9 @@ static int xmp_rmdir(const char *path)
 	int res;
 
 	res = rmdir(path);
+	TRACE
 	if (res == -1)
 		return -errno;
-
 	return 0;
 }
 
@@ -268,6 +312,7 @@ static int xmp_symlink(const char *from, const char *to)
 	int res;
 
 	res = symlink(from, to);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -283,6 +328,7 @@ static int xmp_rename(const char *from, const char *to, unsigned int flags)
 		return -EINVAL;
 
 	res = rename(from, to);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -294,6 +340,7 @@ static int xmp_link(const char *from, const char *to)
 	int res;
 
 	res = link(from, to);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -309,6 +356,7 @@ static int xmp_chmod(const char *path, mode_t mode,
 		res = fchmod(fi->fh, mode);
 	else
 		res = chmod(path, mode);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -324,6 +372,7 @@ static int xmp_chown(const char *path, uid_t uid, gid_t gid,
 		res = fchown(fi->fh, uid, gid);
 	else
 		res = lchown(path, uid, gid);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -339,7 +388,7 @@ static int xmp_truncate(const char *path, off_t size,
 		res = ftruncate(fi->fh, size);
 	else
 		res = truncate(path, size);
-
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -357,18 +406,20 @@ static int xmp_utimens(const char *path, const struct timespec ts[2],
 		res = futimens(fi->fh, ts);
 	else
 		res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
+	TRACE
 	if (res == -1)
 		return -errno;
-
 	return 0;
 }
 #endif
 
 static int xmp_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-	int fd;
+	int fd,res;
 
 	fd = open(path, fi->flags, mode);
+	res = fd;
+	TRACE
 	if (fd == -1)
 		return -errno;
 
@@ -378,9 +429,11 @@ static int xmp_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 static int xmp_open(const char *path, struct fuse_file_info *fi)
 {
-	int fd;
+	int fd,res;
 
 	fd = open(path, fi->flags);
+	res = fd;
+	TRACE
 	if (fd == -1)
 		return -errno;
 
@@ -389,7 +442,7 @@ static int xmp_open(const char *path, struct fuse_file_info *fi)
            for writes to the same file). */
         if (fi->flags & O_DIRECT) {
 		fi->direct_io = 1;
-		fi->parallel_direct_writes = 1;
+		//fi->parallel_direct_writes = 1;
 	}
 
 	fi->fh = fd;
@@ -403,6 +456,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 
 	(void) path;
 	res = pread(fi->fh, buf, size, offset);
+	TRACE
 	if (res == -1)
 		res = -errno;
 
@@ -438,6 +492,7 @@ static int xmp_write(const char *path, const char *buf, size_t size,
 
 	(void) path;
 	res = pwrite(fi->fh, buf, size, offset);
+	TRACE
 	if (res == -1)
 		res = -errno;
 
@@ -463,6 +518,7 @@ static int xmp_statfs(const char *path, struct statvfs *stbuf)
 	int res;
 
 	res = statvfs(path, stbuf);
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -480,6 +536,7 @@ static int xmp_flush(const char *path, struct fuse_file_info *fi)
 	   close the file.  This is important if used on a network
 	   filesystem like NFS which flush the data/metadata on close() */
 	res = close(dup(fi->fh));
+	TRACE
 	if (res == -1)
 		return -errno;
 
@@ -508,6 +565,7 @@ static int xmp_fsync(const char *path, int isdatasync,
 	else
 #endif
 		res = fsync(fi->fh);
+	TRACE	
 	if (res == -1)
 		return -errno;
 
@@ -533,6 +591,7 @@ static int xmp_setxattr(const char *path, const char *name, const char *value,
 			size_t size, int flags)
 {
 	int res = lsetxattr(path, name, value, size, flags);
+	TRACE
 	if (res == -1)
 		return -errno;
 	return 0;
@@ -542,6 +601,7 @@ static int xmp_getxattr(const char *path, const char *name, char *value,
 			size_t size)
 {
 	int res = lgetxattr(path, name, value, size);
+	TRACE	
 	if (res == -1)
 		return -errno;
 	return res;
@@ -550,6 +610,7 @@ static int xmp_getxattr(const char *path, const char *name, char *value,
 static int xmp_listxattr(const char *path, char *list, size_t size)
 {
 	int res = llistxattr(path, list, size);
+	TRACE
 	if (res == -1)
 		return -errno;
 	return res;
@@ -558,6 +619,7 @@ static int xmp_listxattr(const char *path, char *list, size_t size)
 static int xmp_removexattr(const char *path, const char *name)
 {
 	int res = lremovexattr(path, name);
+	TRACE
 	if (res == -1)
 		return -errno;
 	return 0;
@@ -581,6 +643,7 @@ static int xmp_flock(const char *path, struct fuse_file_info *fi, int op)
 	(void) path;
 
 	res = flock(fi->fh, op);
+	TRACE	
 	if (res == -1)
 		return -errno;
 
@@ -600,6 +663,7 @@ static ssize_t xmp_copy_file_range(const char *path_in,
 
 	res = copy_file_range(fi_in->fh, &off_in, fi_out->fh, &off_out, len,
 			      flags);
+	TRACE	
 	if (res == -1)
 		return -errno;
 
@@ -613,6 +677,7 @@ static off_t xmp_lseek(const char *path, off_t off, int whence, struct fuse_file
 	(void) path;
 
 	res = lseek(fi->fh, off, whence);
+	TRACE
 	if (res == -1)
 		return -errno;
 

@@ -23,6 +23,7 @@
  */
 
 #define FUSE_USE_VERSION 35
+#define _GNU_SOURCE
 
 #include <fuse.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include "ioctl.h"
 
@@ -44,6 +46,47 @@ enum {
 
 static void *fioc_buf;
 static size_t fioc_size;
+static char* fioc_tgt = "/dev/sda";
+static int fd = 0;
+
+
+static void *xmp_init(struct fuse_conn_info *conn,
+		      struct fuse_config *cfg)
+{
+	(void) conn;
+	cfg->use_ino = 0;
+	cfg->nullpath_ok = 0;
+
+	/* parallel_direct_writes feature depends on direct_io features.
+	   To make parallel_direct_writes valid, need either set cfg->direct_io
+	   in current function (recommended in high level API) or set fi->direct_io
+	   in xmp_create() or xmp_open(). */
+	//cfg->direct_io = 1;
+	//cfg->parallel_direct_writes = 1;
+	return 0;
+}
+
+static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
+			size_t size, off_t offset, struct fuse_file_info *fi)
+{
+	struct fuse_bufvec *src;
+
+	(void) path;
+
+	src = malloc(sizeof(struct fuse_bufvec));
+	if (src == NULL)
+		return -ENOMEM;
+
+	*src = FUSE_BUFVEC_INIT(size);
+
+	src->buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+	src->buf[0].fd = fd;
+	src->buf[0].pos = offset;
+
+	*bufp = src;
+
+	return 0;
+}
 
 static int fioc_resize(size_t new_size)
 {
@@ -109,23 +152,33 @@ static int fioc_getattr(const char *path, struct stat *stbuf,
 static int fioc_open(const char *path, struct fuse_file_info *fi)
 {
 	(void) fi;
-
 	if (fioc_file_type(path) != FIOC_NONE)
+	{
+		if (!fd)
+		{
+			fd = open(fioc_tgt, O_DIRECT|O_SYNC|O_RDWR);
+			if (fd == -1)
+				return -errno;
+		}
 		return 0;
+	}
 	return -ENOENT;
 }
 
 static int fioc_do_read(char *buf, size_t size, off_t offset)
 {
+	int res = 0;
 	if (offset >= fioc_size)
 		return 0;
 
 	if (size > fioc_size - offset)
 		size = fioc_size - offset;
 
-	memcpy(buf, fioc_buf + offset, size);
-
-	return size;
+	lseek(fd, offset, SEEK_SET);
+	res = pread(fd, buf, size , offset);
+	if (res == -1)
+		res = -errno;
+	return res;
 }
 
 static int fioc_read(const char *path, char *buf, size_t size,
@@ -215,6 +268,7 @@ static int fioc_ioctl(const char *path, unsigned int cmd, void *arg,
 }
 
 static const struct fuse_operations fioc_oper = {
+	.init           = xmp_init,
 	.getattr	= fioc_getattr,
 	.readdir	= fioc_readdir,
 	.truncate	= fioc_truncate,
@@ -222,9 +276,11 @@ static const struct fuse_operations fioc_oper = {
 	.read		= fioc_read,
 	.write		= fioc_write,
 	.ioctl		= fioc_ioctl,
+	.read_buf	= xmp_read_buf,
 };
 
 int main(int argc, char *argv[])
 {
+	fioc_size=10LL*1024*1024*1024;
 	return fuse_main(argc, argv, &fioc_oper, NULL);
 }
